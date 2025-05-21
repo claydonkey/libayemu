@@ -3,10 +3,17 @@
 #include <errno.h>
 #include <assert.h>
 #include <ctype.h>
+#ifdef _WIN32
+#define _CRT_SECURE_NO_WARNINGS
+#include <sys/stat.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#else
 #include <unistd.h>
 
 #include <sys/mman.h>
 #include <sys/stat.h>
+#endif
 #include <fcntl.h>
 
 #include "ayemu.h"
@@ -202,7 +209,74 @@ void ayemu_vtx_free(ayemu_vtx_t *vtx)
 
 
 
+#ifdef _WIN32
 
+
+ayemu_vtx_t *ayemu_vtx_header_from_file(const char *filename) {
+    ayemu_vtx_t *ret = NULL;
+    size_t size;
+    FILE *f = fopen(filename, "rb");
+    if (!f) {
+        fprintf(stderr, "Can't open file %s: %s\n", filename, strerror(errno));
+        return NULL;
+    }
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char *data = (char *)malloc(size);
+    if (!data) {
+        fprintf(stderr, "Can't allocate memory for file %s\n", filename);
+        fclose(f);
+        return NULL;
+    }
+    if (fread(data, 1, size, f) != size) {
+        fprintf(stderr, "Can't read file %s\n", filename);
+        free(data);
+        fclose(f);
+        return NULL;
+    }
+    fclose(f);
+
+    ret = ayemu_vtx_header(data, size);
+
+    free(data);
+    return ret;
+}
+
+
+ayemu_vtx_t *ayemu_vtx_load_from_file(const char *filename) {
+    ayemu_vtx_t *ret = NULL;
+    size_t size;
+    FILE *f = fopen(filename, "rb");
+    if (!f) {
+        fprintf(stderr, "Can't open file %s: %s\n", filename, strerror(errno));
+        return NULL;
+    }
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char *data = (char *)malloc(size);
+    if (!data) {
+        fprintf(stderr, "Can't allocate memory for file %s\n", filename);
+        fclose(f);
+        return NULL;
+    }
+    if (fread(data, 1, size, f) != size) {
+        fprintf(stderr, "Can't read file %s\n", filename);
+        free(data);
+        fclose(f);
+        return NULL;
+    }
+    fclose(f);
+
+    ret = ayemu_vtx_load(data, size);
+
+    free(data);
+    return ret;
+}
+#else
 ayemu_vtx_t * ayemu_vtx_header_from_file(const char *filename)
 {
   ayemu_vtx_t *ret;
@@ -281,3 +355,4 @@ ayemu_vtx_t * ayemu_vtx_load_from_file(const char *filename)
 
   return ret;
 }
+#endif
