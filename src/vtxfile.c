@@ -60,29 +60,30 @@ static data_ptr_t read_word32(data_ptr_t pos, int *p)
   return (data_ptr_t)data;
 }
 
-/* read_string: max 254 chars len (+1 for null terminator).
- */
-static data_ptr_t read_string(data_ptr_t pos, char **res)
-{
-  int len;
+ 
+// --- Safe string copy for read_string ---
+static data_ptr_t read_string(data_ptr_t pos, char **res) {
+    int len;
 
-  if (pos == NULL)
-    return NULL;
+    if (pos == NULL) return NULL;
 
-  len = strlen(pos);
+    len = strlen(pos);
 
-  if (len > AYEMU_VTX_STRING_MAX) {
-    fprintf(stderr, "Error: string len more than %d (=%d)\n", AYEMU_VTX_STRING_MAX, len);
-    return NULL;
-  }
+    if (len > AYEMU_VTX_STRING_MAX) {
+        fprintf(stderr, "Error: string len more than %d (=%d)\n", AYEMU_VTX_STRING_MAX, len);
+        return NULL;
+    }
 
-  *res = calloc(1, len + 1);
+    *res = calloc(1, len + 1);
 
-  strcpy(*res, pos);
+#if defined(_WIN32)
+    strcpy_s(*res, len + 1, pos);
+#else
+    strcpy(*res, pos);
+#endif
 
-  return pos + len + 1;
+    return pos + len + 1;
 }
-
 static data_ptr_t read_header(data_ptr_t buf, ayemu_vtx_t **target, size_t size)
 {
   char hdr[3];
@@ -209,17 +210,24 @@ void ayemu_vtx_free(ayemu_vtx_t *vtx)
 
 
 
-#ifdef _WIN32
-
-
 ayemu_vtx_t *ayemu_vtx_header_from_file(const char *filename) {
     ayemu_vtx_t *ret = NULL;
     size_t size;
-    FILE *f = fopen(filename, "rb");
+    FILE *f = NULL;
+#if defined(_WIN32)
+    char errbuf[128];
+    if (fopen_s(&f, filename, "rb") != 0 || !f) {
+        strerror_s(errbuf, sizeof(errbuf), errno);
+        fprintf(stderr, "Can't open file %s: %s\n", filename, errbuf);
+        return NULL;
+    }
+#else
+    f = fopen(filename, "rb");
     if (!f) {
         fprintf(stderr, "Can't open file %s: %s\n", filename, strerror(errno));
         return NULL;
     }
+#endif
     fseek(f, 0, SEEK_END);
     size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -230,7 +238,11 @@ ayemu_vtx_t *ayemu_vtx_header_from_file(const char *filename) {
         fclose(f);
         return NULL;
     }
+#if defined(_WIN32)
+    if (fread_s(data, size, 1, size, f) != size) {
+#else
     if (fread(data, 1, size, f) != size) {
+#endif
         fprintf(stderr, "Can't read file %s\n", filename);
         free(data);
         fclose(f);
@@ -244,15 +256,24 @@ ayemu_vtx_t *ayemu_vtx_header_from_file(const char *filename) {
     return ret;
 }
 
-
 ayemu_vtx_t *ayemu_vtx_load_from_file(const char *filename) {
     ayemu_vtx_t *ret = NULL;
     size_t size;
-    FILE *f = fopen(filename, "rb");
+    FILE *f = NULL;
+#if defined(_WIN32)
+    char errbuf[128];
+    if (fopen_s(&f, filename, "rb") != 0 || !f) {
+        strerror_s(errbuf, sizeof(errbuf), errno);
+        fprintf(stderr, "Can't open file %s: %s\n", filename, errbuf);
+        return NULL;
+    }
+#else
+    f = fopen(filename, "rb");
     if (!f) {
         fprintf(stderr, "Can't open file %s: %s\n", filename, strerror(errno));
         return NULL;
     }
+#endif
     fseek(f, 0, SEEK_END);
     size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -263,7 +284,11 @@ ayemu_vtx_t *ayemu_vtx_load_from_file(const char *filename) {
         fclose(f);
         return NULL;
     }
+#if defined(_WIN32)
+    if (fread_s(data, size, 1, size, f) != size) {
+#else
     if (fread(data, 1, size, f) != size) {
+#endif
         fprintf(stderr, "Can't read file %s\n", filename);
         free(data);
         fclose(f);
@@ -276,83 +301,3 @@ ayemu_vtx_t *ayemu_vtx_load_from_file(const char *filename) {
     free(data);
     return ret;
 }
-#else
-ayemu_vtx_t * ayemu_vtx_header_from_file(const char *filename)
-{
-  ayemu_vtx_t *ret;
-  size_t size;
-  const size_t page_size = (size_t) sysconf (_SC_PAGESIZE);
-  int fd;
-  struct stat st;
-
-  // printf("Page size is %d\n", page_size);
-
-  if (stat(filename, &st) != 0) {
-    fprintf(stderr, "Can't stat file %s: %s\n", filename, strerror(errno));
-    return NULL;
-  }
-  size = st.st_size;
-
-  fd = open(filename, O_RDONLY, 0);
-  if (fd == 0) {
-    fprintf(stderr, "Can't open file %s: %s\n", filename, strerror(errno));
-    return NULL;
-  }
-
-  size_t data_len = (size / page_size + 1) * page_size;
-
-  char *data = mmap(NULL, data_len, PROT_READ, MAP_PRIVATE, fd, 0);
-  if (data == (void*)(-1)) {
-    fprintf(stderr, "Can't mmap file %s: %s\n", filename, strerror(errno));
-    return NULL;
-  }
-
-  ret = ayemu_vtx_header(data, size);
-
-  if (munmap(data, data_len) != 0) {
-    fprintf(stderr, "Can't munmmap file %s: %s\n", filename, strerror(errno));
-  }
-
-  return ret;
-}
-
-
-ayemu_vtx_t * ayemu_vtx_load_from_file(const char *filename)
-{
-  size_t size;
-  const size_t page_size = (size_t) sysconf (_SC_PAGESIZE);
-  int fd;
-  struct stat st;
-  ayemu_vtx_t *ret;
-
-  // printf("Page size is %d\n", page_size);
-
-  if (stat(filename, &st) != 0) {
-    fprintf(stderr, "Can't stat file %s: %s\n", filename, strerror(errno));
-    return NULL;
-  }
-  size = st.st_size;
-
-  fd = open(filename, O_RDONLY, 0);
-  if (fd == 0) {
-    fprintf(stderr, "Can't open file %s: %s\n", filename, strerror(errno));
-    return NULL;
-  }
-
-  size_t data_len = (size / page_size + 1) * page_size;
-
-  char *data = mmap(NULL, data_len, PROT_READ, MAP_PRIVATE, fd, 0);
-  if (data == (void*)(-1)) {
-    fprintf(stderr, "Can't mmap file %s: %s\n", filename, strerror(errno));
-    return NULL;
-  }
-
-  ret = ayemu_vtx_load(data, size);
-
-  if (munmap(data, data_len) != 0) {
-    fprintf(stderr, "Can't munmmap file %s: %s\n", filename, strerror(errno));
-  }
-
-  return ret;
-}
-#endif
